@@ -161,3 +161,24 @@ logs/
 
 .pdm-python
 requirements/local
+
+# Local edits
+
+# Ignore local datasets downloaded by scripts
+data/
+
+# Ignore outputs, logs, and heavy model checkpoints
+output/
+*.ckpt
+*.pth
+*.h5
+
+# Ignore macOS system file clutter
+.DS_Store
+
+# Ignore local VS Code settings
+.vscode/
+
+# Ignore local conda environments if you ever build them inline
+env/
+.conda/
