@@ -182,3 +182,5 @@ output/
 # Ignore local conda environments if you ever build them inline
 env/
 .conda/
+
+*.npy
