@@ -32,6 +32,7 @@ all_files = sorted([str(f.path) for f in os.scandir(
 
 NUM_POINTS = 2048  # Fixed target token size required by point cloud autoencoders
 point_clouds = {}
+sdfs = {}
 
 
 for file_path in all_files:
@@ -40,6 +41,8 @@ for file_path in all_files:
 
     # Extract the two-digit file identifier (e.g., '033')
     file_stem = Path(file_path).stem
+
+    print(f"Processing {file_stem}")
 
     """ if file_stem != "051":
         print(f"skipped {file_stem}")
@@ -68,6 +71,40 @@ for file_path in all_files:
     faces = faces.astype(np.int32)
 
     points_lloyd = pcu.sample_mesh_lloyd(verts, faces, NUM_POINTS)
+
+    RESOLUTION = 10_000
+    verts_w, faces_w = pcu.make_mesh_watertight(verts, faces, RESOLUTION)
+
+    # 2.5. Compute SDF to mesh
+
+    # 1. Find the exact coordinates of the solid nucleus
+    z_idx, y_idx, x_idx = np.where(mask_filled > 0)
+
+    # 2. Define the bounding box with a 5-pixel padding buffer
+    padding = 5
+    x_min, x_max = x_idx.min() - padding, x_idx.max() + padding
+    y_min, y_max = y_idx.min() - padding, y_idx.max() + padding
+    z_min, z_max = z_idx.min() - padding, z_idx.max() + padding
+
+    # 3. Generate exactly 4000 random points within this tight bounding box
+    num_points = 4000
+
+    # np.random.uniform cleanly handles the min/max scaling for all 3 axes at once
+    points = np.random.uniform(
+        low=[x_min, y_min, z_min],
+        high=[x_max, y_max, z_max],
+        size=(num_points, 3)
+    )
+
+    points = points.astype(np.float32)
+    verts_w = verts_w.astype(np.float32)
+    faces_w = faces_w.astype(np.int32)
+
+    sdf, fid, bc = pcu.signed_distance_to_mesh(points, verts_w, faces_w)
+
+    sdf_array = np.column_stack((points, sdf))
+
+    sdfs[file_stem] = sdf_array
 
     # 3. Extract 3D boundary layer surface voxels
     edges = np.zeros_like(mask_filled)
@@ -141,4 +178,29 @@ print(
 for layer in viewer.layers:
     layer.scale = [6, 1, 1]
 
-# napari.run()
+napari.run()
+
+# 1. Define the folder where you want your permanent files to live
+# Changed name to reflect it holds both types
+output_directory = "./processed_data"
+os.makedirs(output_directory, exist_ok=True)
+
+print("Writing point clouds and SDF arrays to disk...")
+
+# 2. Loop through your cell IDs
+for cell_id in point_clouds.keys():
+
+    # Grab arrays from memory
+    pt_array = point_clouds[cell_id]
+    sdf_array = sdfs[cell_id]
+
+    # 3. Save the Point Cloud NumPy array
+    pt_path = os.path.join(output_directory, f"{cell_id}_ptcloud.npy")
+    np.save(pt_path, pt_array)
+
+    # 4. Save the SDF NumPy array
+    sdf_path = os.path.join(output_directory, f"{cell_id}_sdf.npy")
+    np.save(sdf_path, sdf_array)
+
+print(
+    f"Success! Saved {len(point_clouds)} paired files permanently in '{output_directory}/'.")
