@@ -46,7 +46,8 @@ def _make_conv(
         )
     elif mode == "vector2":
         return nn.Sequential(
-            VNLeakyReLU(in_features, negative_slope=0.0, share_nonlinearity=False),
+            VNLeakyReLU(in_features, negative_slope=0.0,
+                        share_nonlinearity=False),
             VNLinear(in_features, out_features),
         )
 
@@ -158,25 +159,33 @@ class DGCNN(nn.Module):
                     VNLinear(2 * self.hidden_dim, self.hidden_dim),
                 )
             ]
-            _scale_in_list = [2 for i in range(len(hidden_conv2d_channels) - 1)]
-            _scale_out_list = [1 for i in range(len(hidden_conv2d_channels) - 1)]
+            _scale_in_list = [2 for i in range(
+                len(hidden_conv2d_channels) - 1)]
+            _scale_out_list = [1 for i in range(
+                len(hidden_conv2d_channels) - 1)]
             _mode = "vector2"
             _prev_slice = -1
             self.pool = meanpool
             # rotation module
-            self.rotation = VNRotationMatrix(self.num_features, dim=3, return_rotated=True)
+            self.rotation = VNRotationMatrix(
+                self.num_features, dim=3, return_rotated=True)
             # final embedding
-            self.embedding_head = VNLinear(self.num_features, self.num_features)
+            self.embedding_head = VNLinear(
+                self.num_features, self.num_features)
         else:
-            _scale_in_list = [2] + [(i + 1) * 2 for i in range(len(hidden_conv2d_channels) - 2)]
-            _scale_out_list = [1] + [(i + 1) * 2 for i in range(len(hidden_conv2d_channels) - 2)]
+            _scale_in_list = [
+                2] + [(i + 1) * 2 for i in range(len(hidden_conv2d_channels) - 2)]
+            _scale_out_list = [
+                1] + [(i + 1) * 2 for i in range(len(hidden_conv2d_channels) - 2)]
             _prev_slice = -3
             _mode = "scalar"
             self.pool = maxpool
-            self.embedding_head = nn.Linear(self.hidden_conv1d_channels[-1], self.num_features)
+            self.embedding_head = nn.Linear(
+                self.hidden_conv1d_channels[-1], self.num_features)
 
         for j, (c_1, c_2) in enumerate(
-            zip(self.hidden_conv2d_channels[:-1], self.hidden_conv2d_channels[1:])
+            zip(self.hidden_conv2d_channels[:-1],
+                self.hidden_conv2d_channels[1:])
         ):
             convs += [
                 _make_conv(
@@ -189,10 +198,12 @@ class DGCNN(nn.Module):
             ]
         _prev_in = 0
         for j, (c_1, c_2) in enumerate(
-            zip(self.hidden_conv1d_channels[:-1], self.hidden_conv1d_channels[1:])
+            zip(self.hidden_conv1d_channels[:-1],
+                self.hidden_conv1d_channels[1:])
         ):
             if j == 1:
-                self.final_conv += _make_conv(c_1, c_2, final=True, add_in=_prev_in, mode=_mode)
+                self.final_conv += _make_conv(c_1, c_2,
+                                              final=True, add_in=_prev_in, mode=_mode)
             else:
                 self.final_conv += _make_conv(c_1, c_2, final=True, mode=_mode)
             _prev_in = self.final_conv[_prev_slice].in_channels
@@ -214,7 +225,8 @@ class DGCNN(nn.Module):
             include_cross=self.include_cross,
             # to make the scalar autoencoder equivariant we can refrain
             # from concatenating the input point coords to the output
-            include_input=(self.mode == "vector" or self.include_coords or idx > 0),
+            include_input=(
+                self.mode == "vector" or self.include_coords or idx > 0),
         )
 
     def concat_axis(self, x, axis):
@@ -287,9 +299,11 @@ class DGCNN(nn.Module):
         for key in keys:
             # scatter plane features from points
             if key == "grid":
-                fea = self.scatter(c.permute(0, 2, 1), index[key], dim_size=self.reso_grid**3)
+                fea = self.scatter(c.permute(0, 2, 1),
+                                   index[key], dim_size=self.reso_grid**3)
             else:
-                fea = self.scatter(c.permute(0, 2, 1), index[key], dim_size=self.reso_plane**2)
+                fea = self.scatter(c.permute(0, 2, 1),
+                                   index[key], dim_size=self.reso_plane**2)
             if self.scatter == scatter_max:
                 fea = fea[0]
             # gather feature back to points
@@ -298,9 +312,21 @@ class DGCNN(nn.Module):
         return c_out.permute(0, 2, 1)
 
     def forward(self, x, get_rotation=False):
-        input_pc = x.clone()
-        # x is [B, N, 3]
-        x = x.transpose(2, 1)  # [B, 3, N]
+        # Keep only XYZ for the raw input clone to satisfy grid generation downstream
+        input_pc = x.clone()[..., :3]
+
+        # Transpose from [Batch, Points, Channels] -> [Batch, Channels, Points]
+        x = x.transpose(2, 1)
+
+        # --- BULLETPROOF CHANNEL ALIGNMENT ---
+        # Force exactly 3 spatial channels + 1 invariant scalar channel
+        spatial_coords = x[:, :3, :]  # Grab only Z, Y, X
+        dummy_scalar = torch.ones(
+            (x.shape[0], 1, x.shape[-1]), dtype=x.dtype, device=x.device)
+        # Guarantee shape is [B, 4, N]
+        x = torch.cat([spatial_coords, dummy_scalar], dim=1)
+        # ---------------------------------------
+
         num_points = x.shape[-1]
         intermediate_outs = []
         for idx, conv in enumerate(self.convs):
@@ -316,7 +342,8 @@ class DGCNN(nn.Module):
 
             if (len(pre_x.size()) < 5) and (self.mode == "vector") and (idx > 0):
                 if (idx > 0) & (idx < len(self.convs) - 1):
-                    x = self.pool(pre_x, dim=-1, keepdim=True).expand(pre_x.size())
+                    x = self.pool(
+                        pre_x, dim=-1, keepdim=True).expand(pre_x.size())
                     x = torch.cat([x, pre_x], dim=1)
                 else:
                     x = pre_x
@@ -356,11 +383,14 @@ class DGCNN(nn.Module):
             if "grid" in self.plane_type:
                 fea["grid"] = self._generate_grid_features(input_pc, x)
             if "xz" in self.plane_type:
-                fea["xz"] = self._generate_plane_features(input_pc, x, plane="xz")
+                fea["xz"] = self._generate_plane_features(
+                    input_pc, x, plane="xz")
             if "xy" in self.plane_type:
-                fea["xy"] = self._generate_plane_features(input_pc, x, plane="xy")
+                fea["xy"] = self._generate_plane_features(
+                    input_pc, x, plane="xy")
             if "yz" in self.plane_type:
-                fea["yz"] = self._generate_plane_features(input_pc, x, plane="yz")
+                fea["yz"] = self._generate_plane_features(
+                    input_pc, x, plane="yz")
             return {self.x_label: pre_repeat, "rotation": rot, "grid_feats": fea}
 
         if self.mode == "vector":
@@ -376,3 +406,97 @@ class DGCNN(nn.Module):
             return {self.x_label: x, "rotation": rot}
 
         return {self.x_label: x}
+
+
+"""     def forward(self, x, get_rotation=False):
+        # --- FIXED FOR PURE XYZ GEOMETRY ---
+        # If input has only 3 channels (Z, Y, X), dynamically pad a 4th feature channel of uniform ones
+        # Ensure we provide the expected input depth cleanly
+        # Base check to ensure 4-channel formatting is fed into the layer
+        if x.shape[1] == 3:
+            dummy_feature = torch.ones(
+                (x.shape[0], 1, x.shape[2]), dtype=x.dtype, device=x.device)
+            x = torch.cat([x, dummy_feature], dim=1)
+        input_pc = x.clone()
+        # x is [B, N, 3]
+        x = x.transpose(2, 1)  # [B, 3, N]
+        num_points = x.shape[-1]
+        intermediate_outs = []
+        for idx, conv in enumerate(self.convs):
+            if (idx == 0 and self.mode == "vector") or (self.mode == "scalar"):
+                x = self.get_graph_features(x, idx)
+
+            if idx == 0 and self.symmetry_breaking_axis is not None:
+                if isinstance(self.symmetry_breaking_axis, int):
+                    x = self.concat_axis(x, self.symmetry_breaking_axis)
+                assert x.size(1) == 4
+
+            pre_x = conv(x)
+
+            if (len(pre_x.size()) < 5) and (self.mode == "vector") and (idx > 0):
+                if (idx > 0) & (idx < len(self.convs) - 1):
+                    x = self.pool(
+                        pre_x, dim=-1, keepdim=True).expand(pre_x.size())
+                    x = torch.cat([x, pre_x], dim=1)
+                else:
+                    x = pre_x
+            else:
+                x = self.pool(pre_x, dim=-1)
+
+            intermediate_outs.append(x)
+
+        x = torch.cat(intermediate_outs, dim=1)
+        if self.mode == "scalar":
+            _pool_ind = 2
+        else:
+            _pool_ind = 1
+
+        for j, conv in enumerate(self.final_conv):
+            x = conv(x)
+            if (j == _pool_ind) and (self.generate_grid_feats):
+                x = self.pool(x, dim=-1, keepdim=True)
+                pre_repeat = x.clone()  # this is batch_size, feat dims
+                if len(x.shape) == 3:
+                    x = x.repeat(1, 1, num_points)
+                else:
+                    x = x.repeat(1, 1, 1, num_points)
+                x = torch.cat((x, *intermediate_outs), dim=1)
+            elif (j == _pool_ind) and (not self.generate_grid_feats):
+                x = self.pool(x, dim=-1)
+
+        rot = torch.zeros(1).type_as(x)
+        if self.generate_grid_feats:
+            if len(x.shape) == 4:
+                _, rot = self.rotation(pre_repeat.squeeze(dim=-1))
+                rot = rot.mT
+                x = torch.norm(x, dim=-2)
+            x = x.permute(0, 2, 1).contiguous()
+
+            fea = {}
+            if "grid" in self.plane_type:
+                fea["grid"] = self._generate_grid_features(input_pc, x)
+            if "xz" in self.plane_type:
+                fea["xz"] = self._generate_plane_features(
+                    input_pc, x, plane="xz")
+            if "xy" in self.plane_type:
+                fea["xy"] = self._generate_plane_features(
+                    input_pc, x, plane="xy")
+            if "yz" in self.plane_type:
+                fea["yz"] = self._generate_plane_features(
+                    input_pc, x, plane="yz")
+            return {self.x_label: pre_repeat, "rotation": rot, "grid_feats": fea}
+
+        if self.mode == "vector":
+            x, rot = self.rotation(x)
+            x = self.embedding_head(x)
+            x = torch.norm(x, dim=-1)
+            rot = rot.mT
+
+        if self.mode == "scalar":
+            x = self.embedding_head(x)
+
+        if get_rotation:
+            return {self.x_label: x, "rotation": rot}
+
+        return {self.x_label: x}
+ """

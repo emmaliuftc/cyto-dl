@@ -35,5 +35,23 @@ class GeomLoss(nn.Module):
             **kwargs,
         )
 
-    def forward(self, gts, preds):
+    def forward(self, preds, gts):
+        # 1. FORCE CHANNELS-LAST FORMAT
+        # If the last dimension is larger than the second dimension (e.g., 2048 points vs 4 channels),
+        # it means the tensor is channels-first. We transpose it to [Batch, Points, Channels].
+        if len(preds.shape) == 3 and preds.shape[-1] > preds.shape[1]:
+            preds = preds.transpose(1, 2)
+
+        if len(gts.shape) == 3 and gts.shape[-1] > gts.shape[1]:
+            gts = gts.transpose(1, 2)
+
+        # 2. STRIP DUMMY FEATURES
+        # GeomLoss only calculates spatial distance in 3D.
+        # If the model outputted 4 channels, we slice off everything except the first 3 (X, Y, Z).
+        if preds.shape[-1] > 3:
+            preds = preds[..., :3]
+
+        if gts.shape[-1] > 3:
+            gts = gts[..., :3]
+
         return self.loss(preds, gts)

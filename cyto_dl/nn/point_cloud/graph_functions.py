@@ -50,7 +50,7 @@ def get_graph_features(
     x = x.view(batch_size, -1, num_points)
 
     if scalar_inds:
-        scal = x[:, scalar_inds - 1 :, :]
+        scal = x[:, scalar_inds - 1:, :]
         x = x[:, : scalar_inds - 1, :]
         num_scalar_points = scal.size(1)
 
@@ -91,11 +91,15 @@ def get_graph_features(
     feature = feature.permute(*permute_dims).contiguous()
 
     if scalar_inds:
-        feature_unit_vector = feature / torch.norm(feature, dim=1).unsqueeze(dim=1)
+        feature_unit_vector = feature / \
+            torch.norm(feature, dim=1).unsqueeze(dim=1)
         scal = scal.transpose(2, 1).contiguous()
-        scal = scal.view(batch_size, num_points, 1, num_scalar_points, 1).repeat(1, 1, k, 1, 1)
+        scal = scal.view(batch_size, num_points, 1,
+                         num_scalar_points, 1).repeat(1, 1, k, 1, 1)
         scal = scal.permute(0, 3, 4, 1, 2).contiguous()
+
         scal = scal * feature_unit_vector
+
         feature = torch.cat((feature, scal), dim=1)
 
     return feature
